@@ -59,7 +59,7 @@ impl NMDBArc {
             NMQuery {
                 handle: notmuch_query_create(
                     Arc::get_mut(&mut self.0).unwrap().handle,
-                    str_to_i8(query)
+                    str_to_cstr(query).as_ptr()
                 ),
                 db: self.0.clone()
             }
@@ -158,6 +158,14 @@ struct NMThread {
 }
 
 impl NMThread {
+    fn thread_id(&mut self) -> String {
+        unsafe {
+            CStr::from_ptr(
+                notmuch_thread_get_thread_id(self.handle)
+            ).to_str().unwrap().to_string()
+        }
+    }
+
     fn tags(&mut self) -> NMTags {
         unsafe {
             NMTags {
@@ -185,21 +193,17 @@ impl NMTags {
 }
 
 impl Iterator for NMTags {
-    type Item = NMTag;
+    type Item = String;
 
-    fn next(&mut self) -> Option<NMTag> {
+    fn next(&mut self) -> Option<String> {
         unsafe {
-            println!("pree valid?");
             if notmuch_tags_valid(self.handle) == notmuch_sys::TRUE {
-                println!("pree valid!");
                 let cur = notmuch_tags_get(self.handle);
-                println!("got");
                 if ! cur.is_null() {
-                    println!("noot null");
                     notmuch_tags_move_to_next(self.handle);
-                    return Some(NMTag{
-                        text: CStr::from_ptr(cur).to_str().unwrap().to_string(),
-                    });
+                    return Some(
+                        CStr::from_ptr(cur).to_str().unwrap().to_string()
+                    );
                 }
             }
         }
@@ -216,43 +220,35 @@ impl Drop for NMTags {
     }
 }
 
-
-#[derive(Debug)]
-struct NMTag {
-    text: String,
-}
-
-impl NMTag {
-
-}
-
-
-
 fn main() {
-    println!("hi");
-
     let mut nm = NMDBArc::open("/home/grahamc/.mail/grahamc");
-    println!("nm");
-    let mut threads = nm.search_threads("tag:needs-triage and date:2017-02-22..").unwrap();
-    println!("threads");
-    println!("{:?}", threads);
-    for thread in threads {
-        println!("{:?}", thread);
-        break;
+    let mut threads = nm.search_threads("tag:needs-triage and and tag:nixossec date:2017-02-22..").unwrap();
+
+    let mut by_suggested_package: HashMap<String,Vec<NMThread>> = HashMap::new();
+    for mut thread in threads {
+
+        println!("thread:{:?}", thread.thread_id());
+
+        let mut tags: Vec<String> = vec![];
+        for tag in thread.tags() {
+            if tag.starts_with("suggested:") {
+                by_suggested_package.entry(tag).or_insert(vec!()).push(thread.clone());
+            }
+        }
+        println!("{:?}", tags);
     };
+
 
     let mut threads2 = nm.search_threads("tag:unread and date:2017-02-22..").unwrap();
     println!("threads");
     println!("{:?}", threads2);
     for mut thread in threads2 {
-        println!("{:?}", thread);
+        // println!("thread:{:?}", thread.thread_id());
 
         for tag in thread.tags() {
-            println!("t: {:?}", tag);
+            // tags.push(tag);
         }
-        break;
     };
-
 
     /*while let Some(thread) = threads.next_thread() {
 
