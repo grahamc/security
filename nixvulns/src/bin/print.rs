@@ -4,6 +4,7 @@ use std::ffi::{CStr, CString};
 use notmuch_sys::*;
 use std::ptr;
 
+use std::sync::Arc;
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStrExt;
 use std::io::{Read, Write};
@@ -26,8 +27,10 @@ struct NMDB {
     handle: *mut notmuch_sys::notmuch_database_t
 }
 
-impl NMDB {
-    fn open(path: &str) -> NMDB {
+struct NMDBArc (Arc<NMDB>);
+
+impl NMDBArc {
+    fn open(path: &str) -> NMDBArc {
         let mut db = ptr::null_mut();
 
         unsafe {
@@ -38,19 +41,19 @@ impl NMDB {
             );
         }
 
-        return NMDB{
+        return NMDBArc(Arc::new(NMDB{
             handle: db
-        };
+        }));
     }
 
     fn search(&mut self, query: &str) -> NMQuery {
         unsafe {
             NMQuery {
                 handle: notmuch_query_create(
-                    self.handle,
+                    Arc::get_mut(&mut self.0).unwrap().handle,
                     str_to_i8(query)
                 ),
-                db: self
+                db: self.0.clone()
             }
         }
     }
@@ -66,7 +69,7 @@ impl NMDB {
             if status == notmuch_status_t::SUCCESS {
                 Ok(NMThreads {
                     handle: threads,
-                    query: query
+                    query: Arc::new(query)
                 })
             } else {
                 Err(status)
@@ -84,17 +87,16 @@ impl Drop for NMDB {
 }
 
 #[derive(Debug)]
-struct NMQuery<'a> {
+struct NMQuery {
     handle:  *mut notmuch_sys::notmuch_query_t,
-    db: &'a NMDB
+    db: Arc<NMDB>
+}
+
+impl NMQuery {
 
 }
 
-impl<'a> NMQuery<'a> {
-
-}
-
-impl<'a> Drop for NMQuery<'a> {
+impl Drop for NMQuery {
     fn drop(&mut self) {
         unsafe {
             notmuch_query_destroy(self.handle);
@@ -103,18 +105,18 @@ impl<'a> Drop for NMQuery<'a> {
 }
 
 #[derive(Debug)]
-struct NMThreads<'a> {
+struct NMThreads {
     handle: *mut notmuch_sys::notmuch_threads_t,
-    query: NMQuery<'a>
+    query: Arc<NMQuery>
 }
 
-impl<'a> NMThreads<'a> {
+impl NMThreads {
 }
 
-impl<'a> Iterator for NMThreads<'a> {
-    type Item = NMThread<'a>;
+impl Iterator for NMThreads {
+    type Item = NMThread;
 
-    fn next(&'a mut self) -> Option<NMThread<'a>> {
+    fn next(&mut self) -> Option<NMThread> {
         unsafe {
             if notmuch_threads_valid(self.handle) == notmuch_sys::TRUE {
                 let cur = notmuch_threads_get(self.handle);
@@ -123,7 +125,7 @@ impl<'a> Iterator for NMThreads<'a> {
                     notmuch_threads_move_to_next(self.handle);
                     return Some(NMThread{
                         handle: cur,
-                        query: &self.query
+                        query: self.query.clone()
                     });
                 }
             }
@@ -133,7 +135,7 @@ impl<'a> Iterator for NMThreads<'a> {
     }
 }
 
-impl<'a> Drop for NMThreads<'a> {
+impl Drop for NMThreads {
     fn drop(&mut self) {
         unsafe {
             notmuch_threads_destroy(self.handle);
@@ -142,16 +144,16 @@ impl<'a> Drop for NMThreads<'a> {
 }
 
 #[derive(Debug)]
-struct NMThread<'a> {
+struct NMThread {
     handle: *mut notmuch_sys::notmuch_thread_t,
-    query: &'a NMQuery<'a>
+    query: Arc<NMQuery>
 }
 
-impl<'a> NMThread<'a> {
+impl NMThread {
 
 }
 
-impl<'a> Drop for NMThread<'a> {
+impl Drop for NMThread {
     fn drop(&mut self) {
         unsafe {
             notmuch_thread_destroy(self.handle);
@@ -164,13 +166,17 @@ impl<'a> Drop for NMThread<'a> {
 fn main() {
     println!("hi");
 
-    let mut nm = NMDB::open("/home/grahamc/.mail/grahamc");
+    let mut nm = NMDBArc::open("/home/grahamc/.mail/grahamc");
     println!("nm");
     let mut threads = nm.search_threads("tag:needs-triage and date:2017-02-22..").unwrap();
     println!("threads");
     println!("{:?}", threads);
-    /*while let Some(thread) = threads.next_thread() {
+    for thread in threads {
         println!("{:?}", thread);
+    };
+
+    /*while let Some(thread) = threads.next_thread() {
+
         break;
     }*/
 
