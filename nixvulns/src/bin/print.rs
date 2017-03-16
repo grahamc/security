@@ -22,6 +22,14 @@ fn str_to_i8(my_str: &str) -> *const i8 {
     ).unwrap().as_ptr() as *const u8 as *const i8
 }
 
+//fn str_to_i8(input: *const i8) -> String {
+//    return input as *const u8;
+    //CString::new(
+    //    OsString::from(my_str).as_bytes()
+    //).unwrap().as_ptr() as *const u8 as *const i8
+//}
+
+
 #[derive(Debug)]
 struct NMDB {
     handle: *mut notmuch_sys::notmuch_database_t
@@ -150,6 +158,13 @@ struct NMThread {
 }
 
 impl NMThread {
+    fn tags(&mut self) -> NMTags {
+        unsafe {
+            NMTags {
+                handle: notmuch_thread_get_tags(self.handle)
+            }
+        }
+    }
 
 }
 
@@ -159,6 +174,56 @@ impl Drop for NMThread {
             notmuch_thread_destroy(self.handle);
         }
     }
+}
+
+#[derive(Debug)]
+struct NMTags {
+    handle: *mut notmuch_sys::notmuch_tags_t,
+}
+
+impl NMTags {
+}
+
+impl Iterator for NMTags {
+    type Item = NMTag;
+
+    fn next(&mut self) -> Option<NMTag> {
+        unsafe {
+            println!("pree valid?");
+            if notmuch_tags_valid(self.handle) == notmuch_sys::TRUE {
+                println!("pree valid!");
+                let cur = notmuch_tags_get(self.handle);
+                println!("got");
+                if ! cur.is_null() {
+                    println!("noot null");
+                    notmuch_tags_move_to_next(self.handle);
+                    return Some(NMTag{
+                        text: CStr::from_ptr(cur).to_str().unwrap().to_string(),
+                    });
+                }
+            }
+        }
+
+        return None;
+    }
+}
+
+impl Drop for NMTags {
+    fn drop(&mut self) {
+        unsafe {
+            notmuch_tags_destroy(self.handle);
+        }
+    }
+}
+
+
+#[derive(Debug)]
+struct NMTag {
+    text: String,
+}
+
+impl NMTag {
+
 }
 
 
@@ -173,7 +238,21 @@ fn main() {
     println!("{:?}", threads);
     for thread in threads {
         println!("{:?}", thread);
+        break;
     };
+
+    let mut threads2 = nm.search_threads("tag:unread and date:2017-02-22..").unwrap();
+    println!("threads");
+    println!("{:?}", threads2);
+    for mut thread in threads2 {
+        println!("{:?}", thread);
+
+        for tag in thread.tags() {
+            println!("t: {:?}", tag);
+        }
+        break;
+    };
+
 
     /*while let Some(thread) = threads.next_thread() {
 
