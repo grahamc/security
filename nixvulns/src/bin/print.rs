@@ -312,7 +312,6 @@ impl Drop for NMTags {
 #[derive(Debug)]
 struct NMMessages {
     handle: *mut notmuch_sys::notmuch_messages_t,
-    thread: Arc<NMThread>,
     _trace: Option<String>,
 }
 
