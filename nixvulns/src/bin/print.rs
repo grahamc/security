@@ -1,9 +1,13 @@
 extern crate notmuch_sys;
+extern crate mailparse;
 
+//use mime_multipart;
+use std::fs::File;
 use std::ffi::{CStr, CString};
 use notmuch_sys::*;
 use std::ptr;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStrExt;
@@ -11,12 +15,19 @@ use std::io::{Read, Write};
 
 
 fn str_to_cstr(my_str: &str) -> std::ffi::CString {
-    CString::new(
-        OsString::from(my_str).as_bytes()
-    ).unwrap()
+    /*
+    println!("{:?}", b"From\0");
+    let mut foo = "From".as_bytes();
+    let mut foo = CString::new(foo);
+    println!("{:?}", foo);
+    panic!("lol");
+     */
+    let os_str = OsString::from(my_str);
+    let bytes = os_str.as_bytes();
+    CString::new(bytes).unwrap()
 }
 
-fn str_to_i8(my_str: &str) -> *const i8 {
+/*fn str_to_i8(my_str: &str) -> *const i8 {
     CString::new(
         OsString::from(my_str).as_bytes()
     ).unwrap().as_ptr() as *const u8 as *const i8
@@ -28,7 +39,7 @@ fn str_to_i8(my_str: &str) -> *const i8 {
     //    OsString::from(my_str).as_bytes()
     //).unwrap().as_ptr() as *const u8 as *const i8
 //}
-
+*/
 
 #[derive(Debug)]
 struct NMDB {
@@ -40,10 +51,12 @@ struct NMDBArc (Arc<NMDB>);
 impl NMDBArc {
     fn open(path: &str) -> NMDBArc {
         let mut db = ptr::null_mut();
+        let cpath = str_to_cstr(path);
+        let cptr = cpath.as_ptr();
 
         unsafe {
             notmuch_database_open(
-                str_to_cstr(path).as_ptr(),
+                cptr,
                 notmuch_database_mode_t::READ_ONLY,
                 &mut db
             );
@@ -54,19 +67,21 @@ impl NMDBArc {
         }));
     }
 
-    fn search(&mut self, query: &str) -> NMQuery {
+    fn search(&self, query: &str) -> NMQuery {
+        let cquery = str_to_cstr(query);
+        let cptr = cquery.as_ptr();
         unsafe {
             NMQuery {
                 handle: notmuch_query_create(
-                    Arc::get_mut(&mut self.0).unwrap().handle,
-                    str_to_cstr(query).as_ptr()
+                    self.0.handle,
+                    cptr
                 ),
                 db: self.0.clone()
             }
         }
     }
 
-    fn search_threads(&mut self, query: &str) -> Result<NMThreads,notmuch_status_t> {
+    fn search_threads(&self, query: &str) -> Result<NMThreads,notmuch_status_t> {
         let query = self.search(query);
 
         let mut threads = ptr::null_mut();
@@ -158,7 +173,7 @@ struct NMThread {
 }
 
 impl NMThread {
-    fn thread_id(&mut self) -> String {
+    fn thread_id(&self) -> String {
         unsafe {
             CStr::from_ptr(
                 notmuch_thread_get_thread_id(self.handle)
@@ -166,7 +181,15 @@ impl NMThread {
         }
     }
 
-    fn tags(&mut self) -> NMTags {
+    fn subject(&self) -> String {
+        unsafe {
+            CStr::from_ptr(
+                notmuch_thread_get_subject(self.handle)
+            ).to_str().unwrap().to_string()
+        }
+    }
+
+    fn tags(&self) -> NMTags {
         unsafe {
             NMTags {
                 handle: notmuch_thread_get_tags(self.handle)
@@ -174,6 +197,13 @@ impl NMThread {
         }
     }
 
+    fn messages(&self) -> NMMessages {
+        unsafe {
+            NMMessages {
+                handle: notmuch_thread_get_messages(self.handle)
+            }
+        }
+    }
 }
 
 impl Drop for NMThread {
@@ -220,24 +250,153 @@ impl Drop for NMTags {
     }
 }
 
+
+#[derive(Debug)]
+struct NMMessages {
+    handle: *mut notmuch_sys::notmuch_messages_t,
+}
+
+impl NMMessages {
+}
+
+impl Iterator for NMMessages {
+    type Item = NMMessage;
+
+    fn next(&mut self) -> Option<NMMessage> {
+        unsafe {
+            if notmuch_messages_valid(self.handle) == notmuch_sys::TRUE {
+                let cur = notmuch_messages_get(self.handle);
+                if ! cur.is_null() {
+                    notmuch_messages_move_to_next(self.handle);
+                    return Some(NMMessage {
+                        handle: cur
+                    });
+                }
+            }
+        }
+
+        return None;
+    }
+}
+
+impl Drop for NMMessages {
+    fn drop(&mut self) {
+        unsafe {
+            notmuch_messages_destroy(self.handle);
+        }
+    }
+}
+
+
+#[derive(Debug)]
+struct NMMessage {
+    handle: *mut notmuch_sys::notmuch_message_t,
+}
+
+impl NMMessage {
+    fn message_id(&self) -> String {
+        unsafe {
+            CStr::from_ptr(
+                notmuch_message_get_message_id(self.handle)
+            ).to_str().unwrap().to_string()
+        }
+    }
+
+    fn header(&self, header: &str) -> String {
+        let h = str_to_cstr(header);
+        let hptr = h.as_ptr();
+        unsafe {
+            CStr::from_ptr(
+                notmuch_message_get_header(self.handle,
+                                          hptr
+                )
+            ).to_str().unwrap().to_string()
+        }
+    }
+
+    fn filename(&self) -> String {
+        unsafe {
+            CStr::from_ptr(
+                notmuch_message_get_filename(self.handle)
+            ).to_str().unwrap().to_string()
+        }
+    }
+}
+
+impl Drop for NMMessage {
+    fn drop(&mut self) {
+        unsafe {
+            notmuch_message_destroy(self.handle);
+        }
+    }
+}
+
+
+
 fn main() {
     let mut nm = NMDBArc::open("/home/grahamc/.mail/grahamc");
-    let mut threads = nm.search_threads("tag:needs-triage and and tag:nixossec date:2017-02-22..").unwrap();
+    let mut threads = nm.search_threads("tag:needs-triage and tag:nixossec date:2017-02-22..").unwrap();
 
-    let mut by_suggested_package: HashMap<String,Vec<NMThread>> = HashMap::new();
+    let mut by_suggested_package: HashMap<String,Vec<Arc<NMThread>>> = HashMap::new();
     for mut thread in threads {
-
-        println!("thread:{:?}", thread.thread_id());
+        let thread = Arc::new(thread);
 
         let mut tags: Vec<String> = vec![];
         for tag in thread.tags() {
-            if tag.starts_with("suggested:") {
-                by_suggested_package.entry(tag).or_insert(vec!()).push(thread.clone());
+            let mut splits = tag.splitn(2, ":");
+            match (splits.nth(0)) {
+                Some("suggested") => {
+                    if let Some(suggestion) = splits.next() {
+                        by_suggested_package.entry(suggestion.to_string()).or_insert(vec!()).push(thread.clone());
+                    } else {
+                        println!("{:?}", splits);
+                    }
+                }
+                fallback => {
+                    // println!("{:?}", fallback);
+                }
             }
         }
-        println!("{:?}", tags);
     };
 
+    for (tag, threads) in by_suggested_package {
+        println!("## {}", tag);
+
+        for thread in threads {
+            println!("<details>");
+            println!("<summary><strong>{}</strong></summary>\n", thread.subject());
+
+
+            for message in thread.messages() {
+                println!("### {}, `{}`",
+                         message.header("from"),
+                         message.message_id());
+                println!("<!-- {} -->\n", message.filename());
+
+                let mut mailtxt: String = String::new();
+                let mut msg = File::open(message.filename()).unwrap();
+                msg.read_to_string(&mut mailtxt);
+                let parsed = mailparse::parse_mail(mailtxt.as_bytes()).unwrap();
+
+                println!("\n```\n{}\n```\n", parsed.get_body().unwrap());
+
+                if parsed.subparts.len() > 0 {
+                    println!("Additional Parts");
+                    for part in parsed.subparts {
+                        println!("<details><summary>Additional Parts</summary>");
+                        println!("\n```\n{}\n```\n", part.get_body().unwrap());
+                        println!("</details>");
+                    }
+                    println!("\n---\n");
+                }
+
+            }
+            println!("</details>");
+
+        }
+        println!("");
+    }
+/*
 
     let mut threads2 = nm.search_threads("tag:unread and date:2017-02-22..").unwrap();
     println!("threads");
@@ -255,5 +414,5 @@ fn main() {
         break;
     }*/
 
-println!("bye");
+println!("bye");*/
 }

@@ -5,3 +5,4 @@ authors = ["Graham Christensen <graham@grahamc.com>"]
 
 [dependencies]
 notmuch-sys = "4.4.1"
+mailparse = "0.5.1"
