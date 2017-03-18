@@ -6,6 +6,7 @@ use std::fs::File;
 use std::ffi::{CStr, CString};
 use notmuch_sys::*;
 use std::ptr;
+use std::marker::PhantomData;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -26,9 +27,9 @@ fn logtrace(whatup: &str, trace: &Option<String>) {
             trace.push_str("TRUNCATED");
         }
 
-        println!("~ {} >>>{}<<<", whatup, trace);
+        // println!("~ {} >>>{}<<<", whatup, trace);
     } else {
-        println!("~ {} MISSING TRACE", whatup);
+        // println!("~ {} MISSING TRACE", whatup);
     }
 }
 
@@ -255,7 +256,8 @@ impl NMThread {
         unsafe {
             NMMessages {
                 handle: notmuch_thread_get_messages(self.handle),
-                _trace: mktrace_trace_static(&self._trace, "Messages")
+                _trace: mktrace_trace_static(&self._trace, "Messages"),
+                phantom: PhantomData,
             }
         }
     }
@@ -310,18 +312,16 @@ impl Drop for NMTags {
 
 
 #[derive(Debug)]
-struct NMMessages {
+struct NMMessages<'a> {
     handle: *mut notmuch_sys::notmuch_messages_t,
+    phantom: PhantomData<&'a notmuch_sys::notmuch_messages_t>,
     _trace: Option<String>,
 }
 
-impl NMMessages {
-}
+impl<'a> Iterator for NMMessages<'a> {
+    type Item = NMMessage<'a>;
 
-impl Iterator for NMMessages {
-    type Item = NMMessage;
-
-    fn next(&mut self) -> Option<NMMessage> {
+    fn next(&mut self) -> Option<NMMessage<'a>> {
         unsafe {
             if notmuch_messages_valid(self.handle) == notmuch_sys::TRUE {
                 let cur = notmuch_messages_get(self.handle);
@@ -329,6 +329,7 @@ impl Iterator for NMMessages {
                     let mut msg = NMMessage {
                         handle: cur,
                         _trace: mktrace_trace_static(&self._trace, "unknownmsg"),
+                        phantom: PhantomData,
                     };
                     logtrace("Initializing trace", &msg._trace);
                     let mid = msg.message_id();
@@ -337,8 +338,6 @@ impl Iterator for NMMessages {
                     if midlen > 150 {
                         logtrace("Fuckery is afoot", &msg._trace);
                     }
-
-
 
 
                     notmuch_messages_move_to_next(self.handle);
@@ -351,7 +350,7 @@ impl Iterator for NMMessages {
     }
 }
 
-impl Drop for NMMessages {
+impl<'a> Drop for NMMessages<'a> {
     fn drop(&mut self) {
         logtrace("Dropping Messages", &self._trace);
         unsafe {
@@ -362,12 +361,13 @@ impl Drop for NMMessages {
 
 
 #[derive(Debug)]
-struct NMMessage {
+struct NMMessage<'a> {
     handle: *mut notmuch_sys::notmuch_message_t,
     _trace: Option<String>,
+    phantom: PhantomData<&'a notmuch_sys::notmuch_message_t>
 }
 
-impl NMMessage {
+impl<'a> NMMessage<'a> {
     fn message_id(&self) -> String {
         logtrace("Getting message_id", &self._trace);
         unsafe {
@@ -411,7 +411,7 @@ impl NMMessage {
     }
 }
 
-impl Drop for NMMessage {
+impl<'a> Drop for NMMessage<'a> {
     fn drop(&mut self) {
         logtrace("Dropping message", &self._trace);
         unsafe {
@@ -423,34 +423,10 @@ impl Drop for NMMessage {
 
 
 fn main() {
-    let mut messages: Vec<NMMessage> = vec![];
-
-    {
-        let mut nm = NMDBArc::open("/home/grahamc/.mail/grahamc");
-        let mut threads = nm.search_threads("tag:needs-triage and tag:nixossec date:2017-02-22..").unwrap();
-
-        for mut thread in threads {
-            for message in thread.messages() {
-                messages.push(message);
-            }
-        }
-    }
-
-    for msg in messages {
-        println!("{}", msg.message_id());
-    }
-
-
-
-
-
-
-
-    /*
     let mut by_suggested_package: HashMap<String,Vec<Arc<NMThread>>> = HashMap::new();
 
     let mut nm = NMDBArc::open("/home/grahamc/.mail/grahamc");
-    let mut threads = nm.search_threads("tag:needs-triage and tag:nixossec date:2017-02-22..").unwrap();
+    let mut threads = nm.search_threads("tag:needs-triage and date:2017-02-22..").unwrap();
 
 
     for mut thread in threads {
@@ -464,12 +440,10 @@ fn main() {
                     if let Some(suggestion) = splits.next() {
                         by_suggested_package.entry(suggestion.to_string()).or_insert(vec!()).push(thread.clone());
                     } else {
-                        println!("{:?}", splits);
+                        println!("WHAT? {:?}", splits);
                     }
                 }
-                fallback => {
-                    // println!("{:?}", fallback);
-                }
+                fallback => {}
             }
         }
     };
@@ -481,11 +455,9 @@ fn main() {
             println!("<details>");
             println!("<summary><strong>{}</strong></summary>\n", thread.subject());
 
-            println!("{:?} <-> {:?}", thread.messages().next(), thread.messages().next());
-
             for message in thread.messages() {
                 println!("<!-- next: {} -->\n", message.filename());
-                println!("### {}, `{}`",
+                println!("##### {}, `{}`",
                          message.header("from"),
                          message.message_id());
 
@@ -494,13 +466,13 @@ fn main() {
                 msg.read_to_string(&mut mailtxt);
                 let parsed = mailparse::parse_mail(mailtxt.as_bytes()).unwrap();
 
-                // println!("\n```\n{}\n```\n", parsed.get_body().unwrap());
+                println!("\n```\n{}\n```\n", parsed.get_body().unwrap());
 
                 if parsed.subparts.len() > 0 {
                     println!("Additional Parts");
                     for part in parsed.subparts {
                         println!("<details><summary>Additional Parts</summary>");
-                        // println!("\n```\n{}\n```\n", part.get_body().unwrap());
+                        println!("\n```\n{}\n```\n", part.get_body().unwrap());
                         println!("</details>");
                     }
                     println!("\n---\n");
@@ -513,7 +485,7 @@ fn main() {
         println!("");
     }
 
-    */
+
 /*
 
     let mut threads2 = nm.search_threads("tag:unread and date:2017-02-22..").unwrap();
