@@ -59,8 +59,8 @@ impl NMThread {
         unsafe {
             NMMessages::new(
                 notmuch_thread_get_messages(self.handle),
-                &self._trace,
-                self.query.clone()
+                self.query.clone(),
+                &self._trace
             )
         }
     }

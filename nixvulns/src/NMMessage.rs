@@ -1,7 +1,6 @@
 use notmuch_sys::{notmuch_message_t, notmuch_message_get_message_id,
                   notmuch_message_get_header,
                   notmuch_message_get_filename, notmuch_message_destroy};
-use std::marker::PhantomData;
 use nixvulns::memhelp::{logtrace, str_to_cstr, mktrace_trace_id,
                         mktrace_trace_static};
 use std::ffi::CStr;
@@ -9,19 +8,15 @@ use std::sync::Arc;
 use nixvulns::NMQuery::NMQuery;
 
 #[derive(Debug)]
-pub struct NMMessage<'a> {
+pub struct NMMessage {
     handle: *mut notmuch_message_t,
     _trace: Option<String>,
-    query: Arc<NMQuery>,
-    phantom: PhantomData<&'a notmuch_message_t>
 }
 
-pub fn new<'a> (cur: *mut notmuch_message_t, trace: &Option<String>, query: Arc<NMQuery>) -> NMMessage<'a> {
+pub fn new (cur: *mut notmuch_message_t, trace: &Option<String>) -> NMMessage {
     let mut msg = NMMessage {
         handle: cur,
         _trace: mktrace_trace_static(trace, "unknownmsg"),
-        phantom: PhantomData,
-        query: query,
     };
     logtrace("Initializing trace", &msg._trace);
     let mid = msg.message_id();
@@ -34,7 +29,7 @@ pub fn new<'a> (cur: *mut notmuch_message_t, trace: &Option<String>, query: Arc<
     return msg;
 }
 
-impl<'a> NMMessage<'a> {
+impl NMMessage {
     pub fn message_id(&self) -> String {
         logtrace("Getting message_id", &self._trace);
         unsafe {
@@ -78,11 +73,11 @@ impl<'a> NMMessage<'a> {
     }
 }
 
-impl<'a> Drop for NMMessage<'a> {
+impl Drop for NMMessage {
     fn drop(&mut self) {
         logtrace("Dropping message", &self._trace);
         unsafe {
-            //notmuch_message_destroy(self.handle);
+            notmuch_message_destroy(self.handle);
         }
     }
 }

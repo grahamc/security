@@ -20,8 +20,6 @@ fn main() {
 
 
     for thread in threads {
-        let thread = Arc::new(thread);
-
         for tag in thread.tags() {
             let mut splits = tag.splitn(2, ":");
             match splits.nth(0) {

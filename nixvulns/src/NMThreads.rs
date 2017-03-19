@@ -38,16 +38,31 @@ impl NMThreads {
 }
 
 impl Iterator for NMThreads {
-    type Item = NMThread::NMThread;
+    type Item = Arc<NMThread::NMThread>;
 
-    fn next(&mut self) -> Option<NMThread::NMThread> {
+    fn next(&mut self) -> Option<Arc<NMThread::NMThread>> {
         unsafe {
             if notmuch_threads_valid(self.handle) == TRUE {
                 let cur = notmuch_threads_get(self.handle);
 
                 if ! cur.is_null() {
                     notmuch_threads_move_to_next(self.handle);
-                    return Some(NMThread::new(cur, self.query.clone(), &self._trace));
+
+                    {
+                        let checkdb = self.query.threads.read().unwrap();
+                        if checkdb.contains_key(&cur) {
+                            return Some(checkdb.get(&cur).unwrap().clone());
+                        }
+                    }
+
+                    let mut writedb = self.query.threads.write().unwrap();
+                    if writedb.contains_key(&cur) {
+                        return Some(writedb.get(&cur).unwrap().clone());
+                    } else {
+                        let msg = Arc::new(NMThread::new(cur, self.query.clone(), &self._trace));
+                        writedb.insert(cur, msg);
+                        return Some(writedb.get(&cur).unwrap().clone());
+                    }
                 }
             }
         }
